@@ -45,7 +45,11 @@ void efi_call_phys_prelog(void)
 {
 	unsigned long cr4;
 	unsigned long temp;
+	unsigned long phys_addr, virt_addr;
 	struct desc_ptr gdt_descr;
+
+	virt_addr = (unsigned long)_text;
+	phys_addr = virt_addr - PAGE_OFFSET;
 
 	local_irq_save(efi_rt_eflags);
 
@@ -58,18 +62,18 @@ void efi_call_phys_prelog(void)
 
 	if (cr4 & X86_CR4_PAE) {
 		efi_bak_pg_dir_pointer[0].pgd =
-		    swapper_pg_dir[pgd_index(0)].pgd;
-		swapper_pg_dir[0].pgd =
-		    swapper_pg_dir[pgd_index(PAGE_OFFSET)].pgd;
+		    swapper_pg_dir[pgd_index(phys_addr)].pgd;
+		swapper_pg_dir[pgd_index(phys_addr)].pgd =
+		    swapper_pg_dir[pgd_index(virt_addr)].pgd;
 	} else {
 		efi_bak_pg_dir_pointer[0].pgd =
-		    swapper_pg_dir[pgd_index(0)].pgd;
+		    swapper_pg_dir[pgd_index(phys_addr)].pgd;
 		efi_bak_pg_dir_pointer[1].pgd =
-		    swapper_pg_dir[pgd_index(0x400000)].pgd;
-		swapper_pg_dir[pgd_index(0)].pgd =
-		    swapper_pg_dir[pgd_index(PAGE_OFFSET)].pgd;
-		temp = PAGE_OFFSET + 0x400000;
-		swapper_pg_dir[pgd_index(0x400000)].pgd =
+		    swapper_pg_dir[pgd_index(phys_addr + 0x400000)].pgd;
+		swapper_pg_dir[pgd_index(phys_addr)].pgd =
+		    swapper_pg_dir[pgd_index(virt_addr)].pgd;
+		temp = virt_addr + 0x400000;
+		swapper_pg_dir[pgd_index(phys_addr + 0x400000)].pgd =
 		    swapper_pg_dir[pgd_index(temp)].pgd;
 	}
 
