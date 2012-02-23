@@ -16,6 +16,7 @@ header-y += netfilter_arp/
 header-y += netfilter_bridge/
 header-y += netfilter_ipv4/
 header-y += netfilter_ipv6/
+header-y += unaligned/
 header-y += usb/
 header-y += wimax/
 
