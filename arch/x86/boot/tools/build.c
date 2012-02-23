@@ -202,11 +202,18 @@ int main(int argc, char ** argv)
 
 	pe_header = *(unsigned int *)&buf[0x3c];
 
-	/* Size of code */
-	*(unsigned int *)&buf[pe_header + 0x1c] = file_sz;
-
 	/* Size of image */
 	*(unsigned int *)&buf[pe_header + 0x50] = file_sz;
+
+	/*
+	 * Subtract the size of the first section (512 bytes) which
+	 * includes the header and .reloc section. The remaining size
+	 * is that of the .text section.
+	 */
+	file_sz -= 512;
+
+	/* Size of code */
+	*(unsigned int *)&buf[pe_header + 0x1c] = file_sz;
 
 #ifdef CONFIG_X86_32
 	/* Address of entry point */
