@@ -234,6 +234,13 @@ section_table:
 	.word	0				# NumberOfRelocations
 	.word	0				# NumberOfLineNumbers
 	.long	0x42100040			# Characteristics (section flags)
+
+	.section .reloc
+reloc_start:
+	.long	dummy - reloc_start
+	.long	10
+	.word	0
+reloc_end:
 #endif /* CONFIG_EFI_STUB */
 
 	# Kernel attributes; used by setup.  This is part 1 of the
@@ -469,10 +476,3 @@ setup_corrupt:
 
 	.data
 dummy:	.long	0
-
-	.section .reloc
-reloc_start:
-	.long	dummy - reloc_start
-	.long	10
-	.word	0
-reloc_end:

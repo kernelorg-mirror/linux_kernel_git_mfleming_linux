@@ -13,6 +13,7 @@ SECTIONS
 	.bstext		: { *(.bstext) }
 	.bsdata		: { *(.bsdata) }
 
+	.reloc		: { *(.reloc) }
 	. = 497;
 	.header		: { *(.header) }
 	.entrytext	: { *(.entrytext) }
