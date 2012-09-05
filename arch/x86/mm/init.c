@@ -248,20 +248,27 @@ static void __init walk_ram_ranges(
 			void *data)
 {
 	unsigned long start_pfn, end_pfn;
+	bool isa_done = false;
 	int i;
-
-	/* the ISA range is always mapped regardless of memory holes */
-	work_fn(0, ISA_END_ADDRESS, data);
 
 	for_each_mem_pfn_range(i, MAX_NUMNODES, &start_pfn, &end_pfn, NULL) {
 		u64 start = start_pfn << PAGE_SHIFT;
 		u64 end = end_pfn << PAGE_SHIFT;
 
-		if (end <= ISA_END_ADDRESS)
-			continue;
+		if (!isa_done && start > ISA_END_ADDRESS) {
+			work_fn(0, ISA_END_ADDRESS, data);
+			isa_done = true;
+		} else {
+			if (end < ISA_END_ADDRESS)
+				continue;
 
-		if (start < ISA_END_ADDRESS)
-			start = ISA_END_ADDRESS;
+			if (start <= ISA_END_ADDRESS &&
+			    end >= ISA_END_ADDRESS) {
+				start = 0;
+				isa_done = true;
+			}
+		}
+
 #ifdef CONFIG_X86_32
 		/* on 32 bit, we only map up to max_low_pfn */
 		if ((start >> PAGE_SHIFT) >= max_low_pfn)
