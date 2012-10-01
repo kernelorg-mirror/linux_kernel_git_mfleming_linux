@@ -763,6 +763,15 @@ static void __init runtime_code_page_mkexec(void)
 	}
 }
 
+void efi_memory_uc(u64 phys_addr, unsigned long size)
+{
+	u64 npages;
+
+	npages = size / (1 << EFI_PAGE_SHIFT);
+	memrange_efi_to_native(&phys_addr, &npages);
+	set_memory_uc(phys_addr, npages);
+}
+
 /*
  * This function will switch the EFI runtime services to virtual mode.
  * Essentially, look through the EFI memmap and map every region that
@@ -776,7 +785,7 @@ void __init efi_enter_virtual_mode(void)
 	efi_memory_desc_t *md, *prev_md = NULL;
 	efi_status_t status;
 	unsigned long size;
-	u64 end, systab, addr, npages, start_pfn, end_pfn;
+	u64 end, systab, start_pfn, end_pfn;
 	void *p, *va, *new_memmap = NULL;
 	int count = 0;
 
@@ -830,10 +839,14 @@ void __init efi_enter_virtual_mode(void)
 		start_pfn = PFN_DOWN(md->phys_addr);
 		end_pfn = PFN_UP(end);
 
-		if (pfn_range_is_mapped(start_pfn, end_pfn))
+		if (pfn_range_is_mapped(start_pfn, end_pfn)) {
 			va = __va(md->phys_addr);
-		else
-			va = efi_ioremap(md->phys_addr, size, md->type);
+
+			if (!(md->attribute & EFI_MEMORY_WB))
+				efi_memory_uc(md->phys_addr, size);
+		} else
+			va = efi_ioremap(md->phys_addr, size,
+					 md->type, md->attribute);
 
 		md->virt_addr = (u64) (unsigned long) va;
 
@@ -841,13 +854,6 @@ void __init efi_enter_virtual_mode(void)
 			pr_err("ioremap of 0x%llX failed!\n",
 			       (unsigned long long)md->phys_addr);
 			continue;
-		}
-
-		if (!(md->attribute & EFI_MEMORY_WB)) {
-			addr = md->virt_addr;
-			npages = md->num_pages;
-			memrange_efi_to_native(&addr, &npages);
-			set_memory_uc(addr, npages);
 		}
 
 		systab = (u64) (unsigned long) efi_phys.systab;
