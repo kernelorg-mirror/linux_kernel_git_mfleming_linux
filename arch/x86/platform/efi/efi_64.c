@@ -71,6 +71,7 @@ unsigned long efi_call_virt_prelog(void)
 void efi_call_virt_epilog(unsigned long saved)
 {
 	write_cr3(saved);
+	flush_tlb_all();
 }
 
 void __init efi_call_phys_prelog(void)
@@ -91,8 +92,8 @@ void __init efi_call_phys_epilog(void)
 	 * After the lock is released, the original page table is restored.
 	 */
 	set_pgd(pgd_offset_k(0x0UL), save_pgd);
-	__flush_tlb_all();
 	local_irq_restore(efi_flags);
+	flush_tlb_all();
 	early_code_mapping_set_exec(0);
 }
 
