@@ -2892,6 +2892,7 @@ F:	arch/x86/boot/compressed/eboot.[ch]
 F:	arch/x86/include/asm/efi.h
 F:	arch/x86/platform/efi/*
 F:	drivers/firmware/efivars.c
+F:	drivers/firmware/efi-capsule.c
 F:	include/linux/efi*.h
 
 EFIFB FRAMEBUFFER DRIVER

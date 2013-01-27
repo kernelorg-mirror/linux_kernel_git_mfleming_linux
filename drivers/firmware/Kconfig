@@ -53,6 +53,19 @@ config EFI_VARS
 	  Subsequent efibootmgr releases may be found at:
 	  <http://linux.dell.com/efibootmgr>
 
+config EFI_CAPSULE
+       bool "EFI Capsule support"
+       depends on EFI
+       help
+         This option enables the use of the EFI capsule update
+         mechanism for storing crash dumps and function tracing data.
+
+	 In the event of crash dump being stored in a capsule, the
+	 machine will immediately be reset and the crash dump will be
+	 stored in RAM across the reset.
+
+	 If unsure, say N.
+
 config EFI_PCDP
 	bool "Console device selection via EFI PCDP or HCDP table"
 	depends on ACPI && EFI && IA64

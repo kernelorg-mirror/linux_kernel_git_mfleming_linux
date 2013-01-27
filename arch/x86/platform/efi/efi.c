@@ -64,6 +64,7 @@ struct efi __read_mostly efi = {
 	.hcdp       = EFI_INVALID_TABLE_ADDR,
 	.uga        = EFI_INVALID_TABLE_ADDR,
 	.uv_systab  = EFI_INVALID_TABLE_ADDR,
+	.capsule    = EFI_INVALID_TABLE_ADDR,
 };
 EXPORT_SYMBOL(efi);
 
@@ -613,6 +614,9 @@ static int __init efi_config_init(u64 tables, int nr_tables)
 		} else if (!efi_guidcmp(guid, UGA_IO_PROTOCOL_GUID)) {
 			efi.uga = table;
 			pr_cont(" UGA=0x%lx ", table);
+		} else if (!efi_guidcmp(guid, LINUX_EFI_CRASH_GUID)) {
+			efi.capsule = table;
+			pr_cont(" CAPSULE=0x%lx ", table);
 		}
 		tablep += sz;
 	}
@@ -993,3 +997,19 @@ u64 efi_mem_attributes(unsigned long phys_addr)
 	}
 	return 0;
 }
+
+#if 0
+void efi_reboot(int mode)
+{
+	int reset_type = mode ? EFI_RESET_WARM : EFI_RESET_COLD;
+
+	/*
+	 * If we have EFI capsules queued up then use the reset type
+	 * as returned by QueryCapsuleCapabilities().
+	 */
+	if (capsule)
+		reset_type = efi_reset_type;
+
+	efi.reset_system(reset_type, EFI_SUCCESS, 0, NULL);
+}
+#endif
