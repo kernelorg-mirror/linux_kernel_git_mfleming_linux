@@ -71,7 +71,6 @@ static void *pstore_ftrace_seq_start(struct seq_file *s, loff_t *pos)
 	if (!data)
 		return NULL;
 
-	data->off = ps->size % REC_SIZE;
 	data->off += *pos * REC_SIZE;
 	if (data->off + REC_SIZE > ps->size) {
 		kfree(data);
