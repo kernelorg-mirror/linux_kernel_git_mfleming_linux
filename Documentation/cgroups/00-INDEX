@@ -2,6 +2,8 @@
 	- this file
 blkio-controller.txt
 	- Description for Block IO Controller, implementation and usage details.
+cacheqos.txt
+	- Description for Cache QoS Monitoring; implementation and usage details
 cgroups.txt
 	- Control Groups definition, implementation details, examples and API.
 cpuacct.txt
