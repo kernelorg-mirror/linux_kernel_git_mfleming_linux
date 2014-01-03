@@ -904,6 +904,16 @@ config PROC_PID_CPUSET
 	depends on CPUSETS
 	default y
 
+config CGROUP_CACHEQOS
+	bool "Simple Cache QoS Monitoring cgroup subsystem"
+	depends on X86 || X86_64
+	help
+	  Provides a simple Resource Controller for monitoring the
+	  total cache occupancy by the tasks in a cgroup.  This requires
+	  hardware support to track cache usage.
+
+	  Say N if unsure.
+
 config CGROUP_CPUACCT
 	bool "Simple CPU accounting cgroup subsystem"
 	help

@@ -1641,6 +1641,118 @@ static struct intel_uncore_type *snb_msr_uncores[] = {
 };
 /* end of Sandy Bridge uncore support */
 
+#ifdef CONFIG_CGROUP_CACHEQOS
+
+/* needed for the cacheqos cgroup structs */
+#include "../../../kernel/sched/cacheqos.h"
+
+extern struct cacheqos root_cacheqos_group;
+static DEFINE_MUTEX(cqm_mutex);
+
+static int __init cacheqos_late_init(void)
+{
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+	struct rmid_list_element *elem;
+	int i;
+
+	mutex_lock(&cqm_mutex);
+
+	if (cpu_has(c, X86_FEATURE_CQM_OCCUP_LLC)) {
+		root_cacheqos_group.subsys_info =
+		       kzalloc(sizeof(struct cacheqos_subsys_info), GFP_KERNEL);
+		if (!root_cacheqos_group.subsys_info) {
+			mutex_unlock(&cqm_mutex);
+			return -ENOMEM;
+		}
+
+		root_cacheqos_group.subsys_info->cache_max_rmid =
+							  c->x86_cache_max_rmid;
+		root_cacheqos_group.subsys_info->cache_occ_scale =
+							 c->x86_cache_occ_scale;
+		root_cacheqos_group.subsys_info->cache_size = c->x86_cache_size;
+	} else {
+		root_cacheqos_group.monitor_cache = false;
+		root_cacheqos_group.css.ss->disabled = 1;
+		mutex_unlock(&cqm_mutex);
+		return -ENODEV;
+	}
+
+	/* Populate the unused rmid list with all rmids. */
+	INIT_LIST_HEAD(&root_cacheqos_group.subsys_info->rmid_unused_fifo);
+	INIT_LIST_HEAD(&root_cacheqos_group.subsys_info->rmid_inuse_list);
+	elem = kzalloc(sizeof(*elem), GFP_KERNEL);
+	if (!elem)
+		return -ENOMEM;
+
+	elem->rmid = 0;
+	list_add_tail(&elem->list,
+		      &root_cacheqos_group.subsys_info->rmid_inuse_list);
+	for (i = 1; i < root_cacheqos_group.subsys_info->cache_max_rmid; i++) {
+		elem = kzalloc(sizeof(*elem), GFP_KERNEL);
+		if (!elem)
+			return -ENOMEM;
+
+		elem->rmid = i;
+		INIT_LIST_HEAD(&elem->list);
+		list_add_tail(&elem->list,
+			    &root_cacheqos_group.subsys_info->rmid_unused_fifo);
+	}
+
+	/* go live on the root group */
+	root_cacheqos_group.monitor_cache = true;
+
+	mutex_unlock(&cqm_mutex);
+	return 0;
+}
+late_initcall(cacheqos_late_init);
+
+void cacheqos_map_schedule_out(void)
+{
+	/*
+	 * cacheqos_map_schedule_in() will set the MSR correctly, but
+	 * clearing the MSR here will prevent occupancy counts against this
+	 * task during the context switch.  In other words, this gives a
+	 * "better" representation of what's happening in the cache.
+	 */
+	wrmsrl(IA32_PQR_ASSOC, 0);
+}
+
+void cacheqos_map_schedule_in(struct cacheqos *cq)
+{
+	u64 map;
+
+	map = cq->rmid & IA32_RMID_PQR_MASK;
+	wrmsrl(IA32_PQR_ASSOC, map);
+}
+
+void cacheqos_read(void *arg)
+{
+	struct cacheqos *cq = arg;
+	u64 config;
+	u64 result = 0;
+	int cpu, node;
+
+	cpu = smp_processor_id(),
+	node = cpu_to_node(cpu);
+	config = cq->rmid;
+	config = ((config & IA32_RMID_PQR_MASK) <<
+		   IA32_QM_EVTSEL_RMID_POSITION) |
+		   IA32_QM_EVTSEL_EVTID_READ_OCC;
+
+	wrmsrl(IA32_QM_EVTSEL, config);
+	rdmsrl(IA32_QM_CTR, result);
+
+	/* place results in sys_wide_info area for recovery */
+	if (result & IA32_QM_CTR_ERR)
+		result = -1;
+	else
+		result &= ~IA32_QM_CTR_ERR;
+
+	cq->subsys_info->node_results[node] =
+				      result * cq->subsys_info->cache_occ_scale;
+}
+#endif /* CONFIG_CGROUP_CACHEQOS */
+
 /* Nehalem uncore support */
 static void nhm_uncore_msr_disable_box(struct intel_uncore_box *box)
 {

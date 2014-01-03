@@ -54,6 +54,11 @@ struct perf_guest_info_callbacks {
 #include <linux/perf_regs.h>
 #include <asm/local.h>
 
+#ifdef CONFIG_CGROUP_CACHEQOS
+inline void cacheqos_sched_out(struct task_struct *task);
+inline void cacheqos_sched_in(struct task_struct *task);
+#endif /* CONFIG_CGROUP_CACHEQOS */
+
 struct perf_callchain_entry {
 	__u64				nr;
 	__u64				ip[PERF_MAX_STACK_DEPTH];
@@ -677,6 +682,10 @@ static inline void perf_event_task_sched_in(struct task_struct *prev,
 {
 	if (static_key_false(&perf_sched_events.key))
 		__perf_event_task_sched_in(prev, task);
+
+#ifdef CONFIG_CGROUP_CACHEQOS
+	cacheqos_sched_in(task);
+#endif /* CONFIG_CGROUP_CACHEQOS */
 }
 
 static inline void perf_event_task_sched_out(struct task_struct *prev,
@@ -686,6 +695,11 @@ static inline void perf_event_task_sched_out(struct task_struct *prev,
 
 	if (static_key_false(&perf_sched_events.key))
 		__perf_event_task_sched_out(prev, next);
+
+#ifdef CONFIG_CGROUP_CACHEQOS
+	/* use outgoing task to see if cacheqos is active or not */
+	cacheqos_sched_out(prev);
+#endif /* CONFIG_CGROUP_CACHEQOS */
 }
 
 extern void perf_event_mmap(struct vm_area_struct *vma);
