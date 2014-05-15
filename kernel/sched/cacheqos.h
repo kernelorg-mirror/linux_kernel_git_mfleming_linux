@@ -7,6 +7,8 @@
 struct rmid_list_element {
 	int rmid;
 	struct list_head list;
+	u64 free_clock;
+	u64 free_val;
 };
 
 struct cacheqos_subsys_info {
@@ -36,6 +38,7 @@ struct cacheqos {
 
 extern void cacheqos_map_schedule_out(void);
 extern void cacheqos_map_schedule_in(struct cacheqos *);
+extern u64 __cacheqos_read(u32);
 extern void cacheqos_read(void *);
 
 /* return cacheqos group corresponding to this container */

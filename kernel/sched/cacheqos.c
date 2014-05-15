@@ -7,6 +7,7 @@
 #include <linux/rcupdate.h>
 #include <linux/kernel_stat.h>
 #include <linux/err.h>
+#include <linux/trace_clock.h>
 
 #include "cacheqos.h"
 #include "sched.h"
@@ -87,6 +88,10 @@ static int cacheqos_move_rmid_to_unused_list(struct cacheqos *cq)
 			list_del_init(&elem->list);
 			list_add_tail(&elem->list,
 				      &cq->subsys_info->rmid_unused_fifo);
+
+			/* Update statistics */
+			elem->free_clock = trace_clock_global();
+			elem->free_val = __cacheqos_read(elem->rmid);
 			goto quick_exit;
 		}
 	}
@@ -116,10 +121,51 @@ static int cacheqos_deallocate_rmid(struct cacheqos *cq)
 	return 0;
 }
 
-static int cacheqos_allocate_rmid(struct cacheqos *cq)
+/*
+ * This function returns the "coldest" RMID. By coldest, we mean the
+ * RMID with the smallest associated value in IA32_QM_CTR. This is
+ * likely to be the least recently used RMID, but not necessarily.
+ *
+ * If, after grabbing the LRU RMID, it's value isn't 0 (indicating
+ * there's stale lines in the cache) we search for a better (colder)
+ * RMID.
+ *
+ * This function *WILL* return an RMID since the caller of this function
+ * should have checked that there exists an RMID item on the free list.
+ *
+ * We expect to be called with cacheqos_mutex held.
+ */
+static struct rmid_list_element *get_rmid(struct cacheqos *cq)
 {
 	struct rmid_list_element *elem;
 	struct list_head *item;
+	u64 result;
+
+	/* Move rmid from unused to inuse list */
+	item = cq->subsys_info->rmid_unused_fifo.next;
+	elem = list_entry(item, struct rmid_list_element, list);
+
+	result = __cacheqos_read(elem->rmid);
+	if (result != -1) {
+		printk("time delta: %llu, old_val = %llu new_val=%llu\n", trace_clock_global() - elem->free_clock, elem->free_val, result);
+	}
+
+	/*
+	 * If the counter increased after we moved the RMID to the free
+	 * list, we've hit a race condition.
+	 */
+	if (result != -1 && result > elem->free_val)
+		WARN_ON_ONCE(1);
+
+	list_del_init(&elem->list);
+	list_add_tail(&elem->list, &cq->subsys_info->rmid_inuse_list);
+
+	return elem;
+}
+
+static int cacheqos_allocate_rmid(struct cacheqos *cq)
+{
+	struct rmid_list_element *elem;
 
 	mutex_lock(&cacheqos_mutex);
 
@@ -128,13 +174,8 @@ static int cacheqos_allocate_rmid(struct cacheqos *cq)
 		return -EAGAIN;
 	}
 
-	/* Move rmid from unused to inuse list */
-	item = cq->subsys_info->rmid_unused_fifo.next;
-	list_del_init(item);
-	list_add_tail(item, &cq->subsys_info->rmid_inuse_list);
-
 	/* assign rmid to cgroup */
-	elem = list_entry(item, struct rmid_list_element, list);
+	elem = get_rmid(cq);
 	cq->rmid = elem->rmid;
 	cq->monitor_cache = true;
 

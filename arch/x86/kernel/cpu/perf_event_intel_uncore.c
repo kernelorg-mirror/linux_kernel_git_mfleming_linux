@@ -1667,6 +1667,7 @@ static int __init cacheqos_late_init(void)
 
 		root_cacheqos_group.subsys_info->cache_max_rmid =
 							  c->x86_cache_max_rmid;
+		printk("%s: max_rmid=%d\n", __func__, c->x86_cache_max_rmid);
 		root_cacheqos_group.subsys_info->cache_occ_scale =
 							 c->x86_cache_occ_scale;
 		root_cacheqos_group.subsys_info->cache_size = c->x86_cache_size;
@@ -1725,22 +1726,29 @@ void cacheqos_map_schedule_in(struct cacheqos *cq)
 	wrmsrl(IA32_PQR_ASSOC, map);
 }
 
-void cacheqos_read(void *arg)
+static bool timed_cacheqos_read = false;
+u64 __cacheqos_read(u32 rmid)
 {
-	struct cacheqos *cq = arg;
 	u64 config;
 	u64 result = 0;
-	int cpu, node;
+	u64 ns = 0;
 
-	cpu = smp_processor_id(),
-	node = cpu_to_node(cpu);
-	config = cq->rmid;
+	config = rmid;
 	config = ((config & IA32_RMID_PQR_MASK) <<
 		   IA32_QM_EVTSEL_RMID_POSITION) |
 		   IA32_QM_EVTSEL_EVTID_READ_OCC;
 
+	if (!timed_cacheqos_read)
+		ns = sched_clock();
+
 	wrmsrl(IA32_QM_EVTSEL, config);
 	rdmsrl(IA32_QM_CTR, result);
+
+	if (!timed_cacheqos_read) {
+		timed_cacheqos_read = true;
+		printk("%s: register read takes %lluns\n", __func__,
+			sched_clock() - ns);
+	}
 
 	/* place results in sys_wide_info area for recovery */
 	if (result & IA32_QM_CTR_ERR)
@@ -1748,6 +1756,19 @@ void cacheqos_read(void *arg)
 	else
 		result &= ~IA32_QM_CTR_ERR;
 
+	return result;
+}
+
+void cacheqos_read(void *arg)
+{
+	struct cacheqos *cq = arg;
+	u64 result = 0;
+	int cpu, node;
+
+	cpu = smp_processor_id(),
+	node = cpu_to_node(cpu);
+
+	result = __cacheqos_read(cq->rmid);
 	cq->subsys_info->node_results[node] =
 				      result * cq->subsys_info->cache_occ_scale;
 }
