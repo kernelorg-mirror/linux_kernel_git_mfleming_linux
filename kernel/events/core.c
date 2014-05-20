@@ -7488,6 +7488,10 @@ void perf_event_exit_task(struct task_struct *child)
 
 	for_each_task_context_nr(ctxn)
 		perf_event_exit_task_context(child, ctxn);
+#ifdef CONFIG_CGROUP_CACHEQOS
+	/* use outgoing task to see if cacheqos is active or not */
+	cacheqos_sched_out(child);
+#endif /* CONFIG_CGROUP_CACHEQOS */
 }
 
 static void perf_free_event(struct perf_event *event,
