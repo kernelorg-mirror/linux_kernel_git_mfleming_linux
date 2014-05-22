@@ -126,6 +126,14 @@ struct hw_perf_event {
 			/* for tp_event->class */
 			struct list_head	tp_list;
 		};
+		struct { /* intel_qos */
+			struct task_struct	*qos_target;
+			int			qos_state;
+			int			qos_rmid;
+			struct list_head	qos_events_entry;
+			struct list_head	qos_groups_entry;
+			struct list_head	qos_group_entry;
+		};
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 		struct { /* breakpoint */
 			/*
@@ -525,6 +533,33 @@ struct perf_output_handle {
 	void				*addr;
 	int				page;
 };
+
+#ifdef CONFIG_CGROUP_PERF
+
+#include <linux/cgroup.h>
+
+struct perf_cgroup_info;
+
+struct perf_cgroup {
+	struct cgroup_subsys_state	css;
+	struct perf_cgroup_info __percpu *info;
+};
+
+/*
+ * Must ensure cgroup is pinned (css_get) before calling
+ * this function. In other words, we cannot call this function
+ * if there is no cgroup event for the current CPU context.
+ *
+ * XXX: its not safe to use this thing!!!
+ */
+static inline struct perf_cgroup *
+perf_cgroup_from_task(struct task_struct *task)
+{
+	return container_of(task_css(task, perf_subsys_id),
+			    struct perf_cgroup, css);
+}
+
+#endif /* CONFIG_CGROUP_PERF */
 
 #ifdef CONFIG_PERF_EVENTS
 
