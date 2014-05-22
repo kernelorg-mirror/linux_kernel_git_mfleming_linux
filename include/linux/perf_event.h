@@ -126,6 +126,13 @@ struct hw_perf_event {
 			/* for tp_event->class */
 			struct list_head	tp_list;
 		};
+		struct { /* intel_qos */
+			int			qos_state;
+			int			qos_rmid;
+			struct list_head	qos_events_entry;
+			struct list_head	qos_groups_entry;
+			struct list_head	qos_group_entry;
+		};
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 		struct { /* breakpoint */
 			/*
