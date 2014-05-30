@@ -1653,7 +1653,7 @@ static int __init cacheqos_late_init(void)
 {
 	struct cpuinfo_x86 *c = &boot_cpu_data;
 	struct rmid_list_element *elem;
-	int i;
+	int i, err = 0;
 
 	mutex_lock(&cqm_mutex);
 
@@ -1661,8 +1661,8 @@ static int __init cacheqos_late_init(void)
 		root_cacheqos_group.subsys_info =
 		       kzalloc(sizeof(struct cacheqos_subsys_info), GFP_KERNEL);
 		if (!root_cacheqos_group.subsys_info) {
-			mutex_unlock(&cqm_mutex);
-			return -ENOMEM;
+			err = -ENOMEM;
+			goto out;
 		}
 
 		root_cacheqos_group.subsys_info->cache_max_rmid =
@@ -1674,24 +1674,28 @@ static int __init cacheqos_late_init(void)
 	} else {
 		root_cacheqos_group.monitor_cache = false;
 		root_cacheqos_group.css.ss->disabled = 1;
-		mutex_unlock(&cqm_mutex);
-		return -ENODEV;
+		err = -ENODEV;
+		goto out;
 	}
 
 	/* Populate the unused rmid list with all rmids. */
 	INIT_LIST_HEAD(&root_cacheqos_group.subsys_info->rmid_unused_fifo);
 	INIT_LIST_HEAD(&root_cacheqos_group.subsys_info->rmid_inuse_list);
 	elem = kzalloc(sizeof(*elem), GFP_KERNEL);
-	if (!elem)
-		return -ENOMEM;
+	if (!elem) {
+		err = -ENOMEM;
+		goto out;
+	}
 
 	elem->rmid = 0;
 	list_add_tail(&elem->list,
 		      &root_cacheqos_group.subsys_info->rmid_inuse_list);
 	for (i = 1; i < root_cacheqos_group.subsys_info->cache_max_rmid; i++) {
 		elem = kzalloc(sizeof(*elem), GFP_KERNEL);
-		if (!elem)
-			return -ENOMEM;
+		if (!elem) {
+			err = -ENOMEM;
+			goto out;
+		}
 
 		elem->rmid = i;
 		INIT_LIST_HEAD(&elem->list);
@@ -1702,8 +1706,9 @@ static int __init cacheqos_late_init(void)
 	/* go live on the root group */
 	root_cacheqos_group.monitor_cache = true;
 
+out:
 	mutex_unlock(&cqm_mutex);
-	return 0;
+	return err;
 }
 late_initcall(cacheqos_late_init);
 
