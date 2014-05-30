@@ -1712,48 +1712,21 @@ out:
 }
 late_initcall(cacheqos_late_init);
 
-void cacheqos_map_schedule_out(void)
-{
-	/*
-	 * cacheqos_map_schedule_in() will set the MSR correctly, but
-	 * clearing the MSR here will prevent occupancy counts against this
-	 * task during the context switch.  In other words, this gives a
-	 * "better" representation of what's happening in the cache.
-	 */
-	wrmsrl(IA32_PQR_ASSOC, 0);
-}
+extern int cacheqos_allocate_rmid(struct cacheqos *cq);
+extern int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid);
 
-void cacheqos_map_schedule_in(struct cacheqos *cq)
-{
-	u64 map;
-
-	map = cq->rmid & IA32_RMID_PQR_MASK;
-	wrmsrl(IA32_PQR_ASSOC, map);
-}
-
-static bool timed_cacheqos_read = false;
 u64 __cacheqos_read(u32 rmid)
 {
 	u64 config;
 	u64 result = 0;
-	u64 ns = 0;
 
 	config = rmid;
 	config = ((config & IA32_RMID_PQR_MASK) <<
 		   IA32_QM_EVTSEL_RMID_POSITION) |
 		   IA32_QM_EVTSEL_EVTID_READ_OCC;
 
-	if (!timed_cacheqos_read)
-		ns = sched_clock();
-
 	wrmsrl(IA32_QM_EVTSEL, config);
 	rdmsrl(IA32_QM_CTR, result);
-
-	if (!timed_cacheqos_read) {
-		timed_cacheqos_read = true;
-		printk("%s: register read takes %lluns\n", __func__,
-			sched_clock() - ns);
-	}
 
 	/* place results in sys_wide_info area for recovery */
 	if (result & IA32_QM_CTR_ERR)
@@ -1764,18 +1737,70 @@ u64 __cacheqos_read(u32 rmid)
 	return result;
 }
 
-void cacheqos_read(void *arg)
+static void cacheqos_read(struct cacheqos *cq, int rmid)
 {
-	struct cacheqos *cq = arg;
+	int scale = cq->subsys_info->cache_occ_scale;
 	u64 result = 0;
 	int cpu, node;
 
 	cpu = smp_processor_id(),
 	node = cpu_to_node(cpu);
 
-	result = __cacheqos_read(cq->rmid);
-	cq->subsys_info->node_results[node] =
-				      result * cq->subsys_info->cache_occ_scale;
+	result = __cacheqos_read(rmid);
+	/* XXX: locking */
+	cq->subsys_info->node_results[node] = result * scale;
+}
+
+static inline bool needs_rmid(struct cacheqos *cq)
+{
+	return cq != &root_cacheqos_group;
+}
+
+void cacheqos_map_schedule_out(struct cacheqos *cq)
+{
+	u64 rmid;
+
+	/*
+	 * This is probably far too expensive and we should instead be
+	 * caching the rmid value for this task.
+	 */
+	rdmsrl(IA32_PQR_ASSOC, rmid);
+
+	/*
+	 * cacheqos_map_schedule_in() will set the MSR correctly, but
+	 * clearing the MSR here will prevent occupancy counts against this
+	 * task during the context switch.  In other words, this gives a
+	 * "better" representation of what's happening in the cache.
+	 */
+	wrmsrl(IA32_PQR_ASSOC, 0);
+
+	rmid &= IA32_RMID_PQR_MASK;
+	cacheqos_read(cq, rmid);
+
+	if (!needs_rmid(cq))
+		return;
+
+	cacheqos_deallocate_rmid(cq, rmid);
+}
+
+void cacheqos_map_schedule_in(struct cacheqos *cq)
+{
+	u64 map;
+	int rmid = 0;
+
+	if (needs_rmid(cq)) {
+		rmid = cacheqos_allocate_rmid(cq);
+
+		/*
+		 * Failure to allocate an rmid isn't a hard fail. We can
+		 * compromise by contributing to the root cgroup, with
+		 * rmid 0.
+		 */
+		WARN_ON(!rmid);
+	}
+
+	map = rmid & IA32_RMID_PQR_MASK;
+	wrmsrl(IA32_PQR_ASSOC, map);
 }
 #endif /* CONFIG_CGROUP_CACHEQOS */
 

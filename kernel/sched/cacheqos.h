@@ -9,6 +9,7 @@ struct rmid_list_element {
 	struct list_head list;
 	u64 free_clock;
 	u64 free_val;
+	int phys_id;
 };
 
 struct cacheqos_subsys_info {
@@ -33,13 +34,11 @@ struct cacheqos {
 	 * own RMID.
 	 */
 	spinlock_t lock;
-	u32 rmid;
 };
 
-extern void cacheqos_map_schedule_out(void);
+extern void cacheqos_map_schedule_out(struct cacheqos *);
 extern void cacheqos_map_schedule_in(struct cacheqos *);
 extern u64 __cacheqos_read(u32);
-extern void cacheqos_read(void *);
 
 /* return cacheqos group corresponding to this container */
 static inline struct cacheqos *css_cacheqos(struct cgroup_subsys_state *css)
