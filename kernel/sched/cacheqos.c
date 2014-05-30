@@ -104,12 +104,13 @@ quick_exit:
 static int cacheqos_deallocate_rmid(struct cacheqos *cq)
 {
 	struct cacheqos *cq_parent = parent_cacheqos(cq);
-	int err;
+	int err = 0;
 
 	mutex_lock(&cacheqos_mutex);
 	err = cacheqos_move_rmid_to_unused_list(cq);
 	if (err)
-		return err;
+		goto out;
+
 	/* assign parent's rmid to cgroup */
 	cq->monitor_cache = false;
 	cq->rmid = cq_parent->rmid;
@@ -117,8 +118,9 @@ static int cacheqos_deallocate_rmid(struct cacheqos *cq)
 	/* Check for children using this cgroup's rmid, iterate */
 	cacheqos_adjust_children_rmid(cq);
 
+out:
 	mutex_unlock(&cacheqos_mutex);
-	return 0;
+	return err;
 }
 
 /*
