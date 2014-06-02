@@ -15,6 +15,16 @@
 struct cacheqos root_cacheqos_group = { .monitor_cache = false };
 static DEFINE_SPINLOCK(cacheqos_lock);
 
+/* Allocation statistics */
+struct cacheqos_rmid_statistics {
+	atomic_t non_zero;
+	atomic_t total;
+	atomic_t slowpath;
+	atomic_t avg_skew;
+};
+
+static struct cacheqos_rmid_statistics cacheqos_stats;
+
 #if !defined(CONFIG_X86_64) || !defined(CONFIG_X86)
 static int __init cacheqos_late_init(void)
 {
@@ -127,10 +137,25 @@ int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid)
 }
 
 /*
+ * Return a cumulative moving average:
+ *
+ * CMA_n+1 = (x_n+1 + n x CMA_n) / (n+1)
+ */
+static inline int rolling_avg(int new_val, int nr_vals, int old_avg)
+{
+	return (new_val + nr_vals * old_avg) / (nr_vals + 1);
+}
+
+/*
  * This function returns the "coldest" RMID. By coldest, we mean the
  * RMID with the smallest associated value in IA32_QM_CTR. This is
  * likely to be the least recently used RMID, but not necessarily.
  * get_rmid() should be called before trying this slowpath.
+ *
+ * The slowpath is broken into two parts, in order of preference:
+ *
+ *  - First we try to find an RMID with a zero occupancy value
+ *  - We fallback to picking the RMID with the lowest occupancy value
  *
  * This function *WILL* return an RMID since the caller of this function
  * should have checked that there exists an RMID item on the free list.
@@ -139,14 +164,67 @@ int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid)
  */
 static struct rmid_list_element *get_rmid_slowpath(struct cacheqos *cq)
 {
-	struct rmid_list_element *elem;
-	struct list_head *item;
+	struct rmid_list_element *entry, *elem = NULL;
+	struct list_head *head;
+	u64 min_occupancy = -1UL;
+	u64 val = 0;
 
-	WARN_ON(1);
+	lockdep_assert_held(&cacheqos_lock);
 
-	/* XXX: we don't do anything special yet */
-	item = cq->subsys_info->rmid_unused_fifo.next;
-	elem = list_entry(item, struct rmid_list_element, list);
+	/*
+	 * Skip the first entry (LRU) we know it's unsuitable, otherwise
+	 * we wouldn't be executing the slowpath.
+	 */
+	head = cq->subsys_info->rmid_unused_fifo.next;
+	list_for_each_entry(entry, head->next, list) {
+		val = __cacheqos_read(entry->rmid);
+
+		/*
+		 * An RMID with a zero value occupancy is an instant
+		 * winner. Terminate the search.
+		 */
+		if (!val) {
+			elem = entry;
+			break;
+		}
+
+		/*
+		 * Fallback to simply picking the RMID with the least
+		 * value if all are non-zero.
+		 */
+		if (val < min_occupancy) {
+			min_occupancy = val;
+			elem = entry;
+		}
+	}
+
+	/*
+	 * Update statistics.
+	 *
+	 * Note that because we don't use any locks to prevent a reader
+	 * from seeing partial updates, these stats may not be accurate
+	 * when read. They should be close enough, however.
+	 */
+	if (val) {
+		int old_skew, new_skew;
+		int nr_non_zero;
+
+		nr_non_zero = atomic_inc_return(&cacheqos_stats.non_zero);
+
+		/*
+		 * Update the rolling average of skew. This is also
+		 * known as a cumulative moving average.
+		 *
+		 * This is the average distance from zero the rmid
+		 * occupancy value is.
+		 */
+		old_skew = atomic_read(&cacheqos_stats.avg_skew);
+
+		new_skew = rolling_avg(min_occupancy, nr_non_zero-1, old_skew);
+		atomic_set(&cacheqos_stats.avg_skew, new_skew);
+
+	}
+	atomic_inc(&cacheqos_stats.slowpath);
 
 	list_del_init(&elem->list);
 	list_add_tail(&elem->list, &cq->subsys_info->rmid_inuse_list);
@@ -194,7 +272,7 @@ static struct rmid_list_element *get_rmid(struct cacheqos *cq)
 	put_cpu();
 
 	/*
-	 * This can be fine-tuned if perhaps we can stand a non-zero
+	 * This could be fine-tuned if perhaps we can stand a non-zero
 	 * occupancy value as long as it's below some threshold.
 	 */
 	if (result)
@@ -228,6 +306,8 @@ int cacheqos_allocate_rmid(struct cacheqos *cq)
 	elem = get_rmid(cq);
 	if (!elem)
 		elem = get_rmid_slowpath(cq);
+
+	atomic_inc(&cacheqos_stats.total);
 
 	spin_unlock_irqrestore(&cacheqos_lock, flags);
 
@@ -376,6 +456,22 @@ cacheqos_occupancy_percent_persocket_seq_read(struct seq_file *m, void *v)
 	return 0;
 }
 
+static int cacheqos_stats_read(struct seq_file *m, void *v)
+{
+	struct cacheqos *cq = css_cacheqos(seq_css(m));
+
+	seq_printf(m, "Nr of allocations: %u\n",
+		   atomic_read(&cacheqos_stats.total));
+	seq_printf(m, "Nr of slowpath allocs %u\n",
+		   atomic_read(&cacheqos_stats.slowpath));
+	seq_printf(m, "Nr of non-zero slowpath allocs %u\n",
+		  atomic_read(&cacheqos_stats.non_zero));
+	seq_printf(m, "Avg skew: %u (bytes)\n",
+		   atomic_read(&cacheqos_stats.avg_skew) *
+			cq->subsys_info->cache_occ_scale);
+	return 0;
+}
+
 static struct cftype cacheqos_files[] = {
 	{
 		.name = "monitor_cache",
@@ -399,6 +495,10 @@ static struct cftype cacheqos_files[] = {
 	{
 		.name = "occupancy_percent",
 		.seq_show = cacheqos_occupancy_percent_read,
+	},
+	{
+		.name = "stats",
+		.seq_show = cacheqos_stats_read,
 	},
 	{ }	/* terminate */
 };
