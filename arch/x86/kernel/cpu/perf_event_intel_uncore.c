@@ -1688,6 +1688,7 @@ static int __init cacheqos_late_init(void)
 	}
 
 	elem->rmid = 0;
+	atomic_set(&elem->refcnt, 0);
 	list_add_tail(&elem->list,
 		      &root_cacheqos_group.subsys_info->rmid_inuse_list);
 	for (i = 1; i < root_cacheqos_group.subsys_info->cache_max_rmid; i++) {
@@ -1699,6 +1700,7 @@ static int __init cacheqos_late_init(void)
 
 		elem->rmid = i;
 		INIT_LIST_HEAD(&elem->list);
+		atomic_set(&elem->refcnt, 0);
 		list_add_tail(&elem->list,
 			    &root_cacheqos_group.subsys_info->rmid_unused_fifo);
 	}
@@ -1713,7 +1715,7 @@ out:
 late_initcall(cacheqos_late_init);
 
 extern int cacheqos_allocate_rmid(struct cacheqos *cq);
-extern int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid);
+extern int cacheqos_deallocate_rmid(struct cacheqos *cq);
 
 u64 __cacheqos_read(u32 rmid)
 {
@@ -1737,15 +1739,19 @@ u64 __cacheqos_read(u32 rmid)
 	return result;
 }
 
-static void cacheqos_read(struct cacheqos *cq, int rmid)
+static void cacheqos_read(struct cacheqos *cq)
 {
 	int scale = cq->subsys_info->cache_occ_scale;
 	unsigned long flags;
 	u64 result = 0;
 	int cpu, node;
+	u32 rmid = 0;
 
 	cpu = smp_processor_id(),
 	node = cpu_to_node(cpu);
+
+	if (cq->rmid)
+		rmid = cq->rmid->rmid;
 
 	result = __cacheqos_read(rmid);
 
@@ -1761,14 +1767,6 @@ static inline bool needs_rmid(struct cacheqos *cq)
 
 void cacheqos_map_schedule_out(struct cacheqos *cq)
 {
-	u64 rmid;
-
-	/*
-	 * This is probably far too expensive and we should instead be
-	 * caching the rmid value for this task.
-	 */
-	rdmsrl(IA32_PQR_ASSOC, rmid);
-
 	/*
 	 * cacheqos_map_schedule_in() will set the MSR correctly, but
 	 * clearing the MSR here will prevent occupancy counts against this
@@ -1777,32 +1775,32 @@ void cacheqos_map_schedule_out(struct cacheqos *cq)
 	 */
 	wrmsrl(IA32_PQR_ASSOC, 0);
 
-	rmid &= IA32_RMID_PQR_MASK;
-	cacheqos_read(cq, rmid);
+	cacheqos_read(cq);
 
 	if (!needs_rmid(cq))
 		return;
 
-	cacheqos_deallocate_rmid(cq, rmid);
+	cacheqos_deallocate_rmid(cq);
 }
 
 void cacheqos_map_schedule_in(struct cacheqos *cq)
 {
-	u64 map;
-	int rmid = 0;
+	u64 map = 0;
 
 	if (needs_rmid(cq)) {
-		rmid = cacheqos_allocate_rmid(cq);
+		cacheqos_allocate_rmid(cq);
 
 		/*
 		 * Failure to allocate an rmid isn't a hard fail. We can
 		 * compromise by contributing to the root cgroup, with
 		 * rmid 0.
 		 */
-		WARN_ON(!rmid);
+		WARN_ON(!cq->rmid);
 	}
 
-	map = rmid & IA32_RMID_PQR_MASK;
+	if (cq->rmid)
+		map = cq->rmid->rmid & IA32_RMID_PQR_MASK;
+
 	wrmsrl(IA32_PQR_ASSOC, map);
 }
 #endif /* CONFIG_CGROUP_CACHEQOS */

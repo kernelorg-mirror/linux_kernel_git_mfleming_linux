@@ -76,41 +76,32 @@ inline void cacheqos_sched_in(struct task_struct *task)
 	}
 }
 
-static int cacheqos_move_rmid_to_unused_list(struct cacheqos *cq, int rmid)
+static int cacheqos_move_rmid_to_unused_list(struct cacheqos *cq)
 {
-	struct rmid_list_element *elem;
+	struct rmid_list_element *elem = cq->rmid;
+	int cpu;
 
 	/*
 	 * Assumes only called when cq->rmid is valid (ie, it is on the
 	 * inuse list) and cacheqos_lock is held.
 	 */
 	lockdep_assert_held(&cacheqos_lock);
-	list_for_each_entry(elem, &cq->subsys_info->rmid_inuse_list, list) {
-		int cpu;
 
-		if (rmid == elem->rmid) {
-			/* Move rmid from inuse to unused list */
-			list_del_init(&elem->list);
-			list_add_tail(&elem->list,
-				      &cq->subsys_info->rmid_unused_fifo);
+	/* Move rmid from inuse to unused list */
+	list_del_init(&elem->list);
+	list_add_tail(&elem->list, &cq->subsys_info->rmid_unused_fifo);
 
-			/* Update statistics */
-			cpu = get_cpu();
-			elem->free_clock = trace_clock_global();
-			elem->free_val = __cacheqos_read(elem->rmid);
-			elem->phys_id = topology_physical_package_id(cpu);
-			put_cpu();
+	/* Update statistics */
+	cpu = get_cpu();
+	elem->free_clock = trace_clock_global();
+	elem->free_val = __cacheqos_read(elem->rmid);
+	elem->phys_id = topology_physical_package_id(cpu);
+	put_cpu();
 
-			goto quick_exit;
-		}
-	}
-	return -ELIBBAD;
-
-quick_exit:
 	return 0;
 }
 
-int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid)
+int cacheqos_deallocate_rmid(struct cacheqos *cq)
 {
 	unsigned long flags;
 	int err = 0;
@@ -124,15 +115,24 @@ int cacheqos_deallocate_rmid(struct cacheqos *cq, int rmid)
 	 * cacheqos_dellocate_rmid() despite having never allocated an
 	 * RMID.
 	 */
-	if (!rmid)
-		return 0;
+	spin_lock_irqsave(&cq->lock, flags);
+	if (!cq->rmid)
+		goto out;
 
-	spin_lock_irqsave(&cacheqos_lock, flags);
+	if (atomic_dec_return(&cq->rmid->refcnt))
+		goto out;
 
-	err = cacheqos_move_rmid_to_unused_list(cq, rmid);
+	/* No more users of this rmid, free it */
+	spin_lock(&cacheqos_lock);
+	err = cacheqos_move_rmid_to_unused_list(cq);
+	spin_unlock(&cacheqos_lock);
+
 	WARN_ON(err);
 
-	spin_unlock_irqrestore(&cacheqos_lock, flags);
+	cq->rmid = NULL;
+
+out:
+	spin_unlock_irqrestore(&cq->lock, flags);
 	return err;
 }
 
@@ -293,13 +293,18 @@ int cacheqos_allocate_rmid(struct cacheqos *cq)
 	struct rmid_list_element *elem;
 	unsigned long flags;
 
-	spin_lock_irqsave(&cacheqos_lock, flags);
+	spin_lock_irqsave(&cq->lock, flags);
+
+	if (cq->rmid)
+		goto inc_ref;
 
 	/*
 	 * Having absolutely no rmids is a hard fail.
 	 */
+	spin_lock(&cacheqos_lock);
 	if (list_empty(&cq->subsys_info->rmid_unused_fifo)) {
-		spin_unlock_irqrestore(&cacheqos_lock, flags);
+		spin_unlock(&cacheqos_lock);
+		spin_unlock_irqrestore(&cq->lock, flags);
 		return 0;
 	}
 
@@ -307,11 +312,17 @@ int cacheqos_allocate_rmid(struct cacheqos *cq)
 	if (!elem)
 		elem = get_rmid_slowpath(cq);
 
+	spin_unlock(&cacheqos_lock);
+
+	cq->rmid = elem;
 	atomic_inc(&cacheqos_stats.total);
 
-	spin_unlock_irqrestore(&cacheqos_lock, flags);
+inc_ref:
+	atomic_inc(&cq->rmid->refcnt);
 
-	return elem->rmid;
+	spin_unlock_irqrestore(&cq->lock, flags);
+
+	return cq->rmid->rmid;
 }
 
 /* create a new cacheqos cgroup */

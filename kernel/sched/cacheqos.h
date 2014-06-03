@@ -10,6 +10,7 @@ struct rmid_list_element {
 	u64 free_clock;
 	u64 free_val;
 	int phys_id;
+	atomic_t refcnt;
 };
 
 struct cacheqos_subsys_info {
@@ -36,6 +37,7 @@ struct cacheqos {
 	 * own RMID.
 	 */
 	spinlock_t lock;
+	struct rmid_list_element *rmid;
 };
 
 extern void cacheqos_map_schedule_out(struct cacheqos *);
