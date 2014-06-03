@@ -1740,6 +1740,7 @@ u64 __cacheqos_read(u32 rmid)
 static void cacheqos_read(struct cacheqos *cq, int rmid)
 {
 	int scale = cq->subsys_info->cache_occ_scale;
+	unsigned long flags;
 	u64 result = 0;
 	int cpu, node;
 
@@ -1747,8 +1748,10 @@ static void cacheqos_read(struct cacheqos *cq, int rmid)
 	node = cpu_to_node(cpu);
 
 	result = __cacheqos_read(rmid);
-	/* XXX: locking */
+
+	spin_lock_irqsave(&cq->subsys_info->results_lock, flags);
 	cq->subsys_info->node_results[node] = result * scale;
+	spin_unlock_irqrestore(&cq->subsys_info->results_lock, flags);
 }
 
 static inline bool needs_rmid(struct cacheqos *cq)

@@ -19,6 +19,8 @@ struct cacheqos_subsys_info {
 	int cache_occ_scale;
 	int cache_size;
 	u64 node_results[MAX_NUMNODES];
+	/* Protects node_results */
+	spinlock_t results_lock;
 };
 
 struct cacheqos {

@@ -375,11 +375,11 @@ static int cacheqos_occupancy_read(struct seq_file *m, void *v)
 	u64 total_occupancy = 0;
 	int node;
 
-	spin_lock_irq(&cacheqos_lock);
+	spin_lock_irq(&cq->subsys_info->results_lock);
 	for_each_node_with_cpus(node)
 		total_occupancy += cq->subsys_info->node_results[node];
 
-	spin_unlock_irq(&cacheqos_lock);
+	spin_unlock_irq(&cq->subsys_info->results_lock);
 
 	seq_printf(m, "%llu\n", total_occupancy);
 	return 0;
@@ -392,13 +392,13 @@ cacheqos_occupancy_persocket_seq_read(struct seq_file *m, void *v)
 	struct cacheqos *cq = css_cacheqos(seq_css(m));
 	int node;
 
-	spin_lock_irq(&cacheqos_lock);
+	spin_lock_irq(&cq->subsys_info->results_lock);
 	for_each_node_with_cpus(node) {
 		seq_printf(m, "%llu\n",
 			   cq->subsys_info->node_results[node]);
 	}
 
-	spin_unlock_irq(&cacheqos_lock);
+	spin_unlock_irq(&cq->subsys_info->results_lock);
 
 	return 0;
 }
@@ -413,13 +413,13 @@ static int cacheqos_occupancy_percent_read(struct seq_file *m, void *v)
 	int parts_of_100, parts_of_10000;
 	int cache_size;
 
-	spin_lock_irq(&cacheqos_lock);
+	spin_lock_irq(&cq->subsys_info->results_lock);
 	for_each_node_with_cpus(node) {
 		++node_cnt;
 		total_occupancy += cq->subsys_info->node_results[node];
 	}
 
-	spin_unlock_irq(&cacheqos_lock);
+	spin_unlock_irq(&cq->subsys_info->results_lock);
 
 	cache_size = cq->subsys_info->cache_size * node_cnt;
 	parts_of_100 = (total_occupancy * 100) / (cache_size * 1024);
@@ -440,7 +440,7 @@ cacheqos_occupancy_percent_persocket_seq_read(struct seq_file *m, void *v)
 	int cache_size;
 	int parts_of_100, parts_of_10000;
 
-	spin_lock_irq(&cacheqos_lock);
+	spin_lock_irq(&cq->subsys_info->results_lock);
 	cache_size = cq->subsys_info->cache_size;
 	for_each_node_with_cpus(node) {
 		total_occupancy = cq->subsys_info->node_results[node];
@@ -451,7 +451,7 @@ cacheqos_occupancy_percent_persocket_seq_read(struct seq_file *m, void *v)
 		seq_printf(m, "%d.%02d\n", parts_of_100, parts_of_10000);
 	}
 
-	spin_unlock_irq(&cacheqos_lock);
+	spin_unlock_irq(&cq->subsys_info->results_lock);
 
 	return 0;
 }
