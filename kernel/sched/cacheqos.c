@@ -470,7 +470,11 @@ cacheqos_occupancy_percent_persocket_seq_read(struct seq_file *m, void *v)
 static int cacheqos_stats_read(struct seq_file *m, void *v)
 {
 	struct cacheqos *cq = css_cacheqos(seq_css(m));
+	struct rmid_list_element *entry;
+	struct list_head *head;
+	int count;
 
+	spin_lock_irq(&cacheqos_lock);
 	seq_printf(m, "Nr of allocations: %u\n",
 		   atomic_read(&cacheqos_stats.total));
 	seq_printf(m, "Nr of slowpath allocs %u\n",
@@ -480,6 +484,22 @@ static int cacheqos_stats_read(struct seq_file *m, void *v)
 	seq_printf(m, "Avg skew: %u (bytes)\n",
 		   atomic_read(&cacheqos_stats.avg_skew) *
 			cq->subsys_info->cache_occ_scale);
+
+	count = 0;
+	head = &cq->subsys_info->rmid_unused_fifo;
+	list_for_each_entry(entry, head, list)
+		count++;
+
+	seq_printf(m, "Nr of unused rmids: %u\n", count);
+
+	count = 0;
+	head = &cq->subsys_info->rmid_inuse_list;
+	list_for_each_entry(entry, head, list)
+		count++;
+
+	seq_printf(m, "Nr of inuse rmids: %u\n", count);
+
+	spin_unlock_irq(&cacheqos_lock);
 	return 0;
 }
 
