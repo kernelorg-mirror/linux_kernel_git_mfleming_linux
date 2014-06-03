@@ -119,7 +119,60 @@ test4() {
     mkdir
 }
 
+#
+# test5:
+# Make sure every task in a cgroup uses the same rmid, e.g. test the
+# reference counting code for an rmid element.
+#
+test5() {
+    mkdir g1 g2
+
+    for t in $(seq 1 $(($NR_RMIDS / 2))); do
+        ( trap "exit 0" SIGCONT ; while :; do : ; done ) &
+        echo $! > g1/tasks
+        echo 1 > g1/cacheqos.monitor_cache
+    done
+
+    for t in $(seq $(($NR_RMIDS / 2 + 1)) $NR_RMIDS); do
+        ( trap "exit 0" SIGCONT ; while :; do : ; done ) &
+        echo $! > g2/tasks
+        echo 1 > g2/cacheqos.monitor_cache
+    done
+
+    inuse=`grep inuse g2/cacheqos.stats | sed 's/^.*\: //'`
+    if [ $inuse -ne 3 ]; then
+        echo "test5: unexpected number of rmids in use: " $inuse >&2
+    fi
+
+    non_zero_allocs=`grep "non-zero" g2/cacheqos.stats | sed 's/^.*allocs //'`
+    if [ $non_zero_allocs -ne 0 ]; then
+        echo "test5: triggered rmid recycling: " $non_zero_allocs >&2
+    fi
+
+    for t in `cat g1/tasks`; do
+        if [ ! -z "$t" ]; then
+            kill -s SIGCONT $t
+        fi
+    done
+
+    for t in `cat g2/tasks`; do
+        if [ ! -z "$t" ]; then
+            kill -s SIGCONT $t
+        fi
+    done
+
+    # Wait for every child process to catch SIGCONT and exit
+    wait
+    rmdir g1 g2
+}
+
 cd $sysfs_dir
 
+#
+# NOTE: The ordering of these tests is important. The early tests rely
+# on the fact that we haven't tagged all the cachelines with RMIDs and
+# therefore won't trigger the kernel's RMID recycling algorithm.
+#
+test5
 test1
 test3
