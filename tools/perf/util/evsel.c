@@ -882,7 +882,8 @@ int __perf_evsel__read_on_cpu(struct perf_evsel *evsel,
 }
 
 int __perf_evsel__read(struct perf_evsel *evsel,
-		       int ncpus, int nthreads, bool scale)
+		       int ncpus, int nthreads, bool scale,
+		       bool (*f_skip)(struct perf_evsel *evsel, int cpu, u64 val))
 {
 	size_t nv = scale ? 3 : 1;
 	int cpu, thread;
@@ -901,6 +902,9 @@ int __perf_evsel__read(struct perf_evsel *evsel,
 			if (readn(FD(evsel, cpu, thread),
 				  &count, nv * sizeof(u64)) < 0)
 				return -errno;
+
+			if (f_skip && f_skip(evsel, cpu, count.val))
+				continue;
 
 			aggr->val += count.val;
 			if (scale) {

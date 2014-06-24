@@ -388,17 +388,92 @@ static void update_shadow_stats(struct perf_evsel *counter, u64 *count)
 }
 
 /*
+ * If 'evsel' is a per-socket event we may get duplicate values
+ * reported. We need to discard all but one per-socket value.
+ */
+static bool counter_per_socket_skip(struct perf_evsel *evsel, int cpu, u64 val)
+{
+	struct cpu_map *map;
+	int i, ncpus;
+	int s1, s2;
+
+	if (!evsel->system_wide)
+		return false;
+
+	map = perf_evsel__cpus(evsel);
+	ncpus = map->nr;
+
+	s1 = cpu_map__get_socket(evsel_list->cpus, map->map[cpu]);
+
+	/*
+	 * Read all CPUs for this socket and see if any already have
+	 * value assigned.
+	 */
+	for (i = 0; i < ncpus; i++) {
+		s2 = cpu_map__get_socket(evsel_list->cpus, map->map[i]);
+		if (s1 != s2)
+			continue;
+
+		if (evsel->counts->cpu[i].val)
+			return true;
+	}
+
+	/* Stash the counter value in unused ->counts */
+	evsel->counts->cpu[cpu].val = val;
+	return false;
+}
+
+static bool aggr_per_socket_skip(struct perf_evsel *evsel, int cpu)
+{
+	struct cpu_map *map;
+	int leader_cpu = -1;
+	int i, ncpus;
+	int s1, s2;
+
+	map = perf_evsel__cpus(evsel);
+	ncpus = map->nr;
+
+	s1 = cpu_map__get_socket(evsel_list->cpus, map->map[cpu]);
+
+	/*
+	 * Find the first enabled counter for this socket and skip
+	 * everything else.
+	 */
+	for (i = 0; i < ncpus; i++) {
+		s2 = cpu_map__get_socket(evsel_list->cpus, map->map[i]);
+		if (s1 != s2)
+			continue;
+
+		if (!evsel->counts->cpu[i].ena)
+			continue;
+
+		leader_cpu = i;
+		break;
+	}
+
+	if (cpu == leader_cpu)
+		return false;
+
+	return true;
+}
+
+/*
  * Read out the results of a single counter:
  * aggregate counts across CPUs in system-wide mode
  */
 static int read_counter_aggr(struct perf_evsel *counter)
 {
 	struct perf_stat *ps = counter->priv;
+	bool (*f_skip)(struct perf_evsel *evsel, int cpu, u64 val) = NULL;
 	u64 *count = counter->counts->aggr.values;
 	int i;
 
+	if (counter->per_pkg)
+		f_skip = counter_per_socket_skip;
+
 	if (__perf_evsel__read(counter, perf_evsel__nr_cpus(counter),
-			       thread_map__nr(evsel_list->threads), scale) < 0)
+			       thread_map__nr(evsel_list->threads),
+			       scale, f_skip) < 0)
 		return -1;
 
 	for (i = 0; i < 3; i++)
@@ -450,12 +525,18 @@ static void print_interval(void)
 		evlist__for_each(evsel_list, counter) {
 			ps = counter->priv;
 			memset(ps->res_stats, 0, sizeof(ps->res_stats));
+			memset(counter->counts->cpu, 0,
+			       sizeof(struct perf_counts_values) *
+			       perf_evsel__nr_cpus(counter));
 			read_counter_aggr(counter);
 		}
 	} else	{
 		evlist__for_each(evsel_list, counter) {
 			ps = counter->priv;
 			memset(ps->res_stats, 0, sizeof(ps->res_stats));
+			memset(counter->counts->cpu, 0,
+			       sizeof(struct perf_counts_values) *
+			       perf_evsel__nr_cpus(counter));
 			read_counter(counter);
 		}
 	}
@@ -1129,6 +1210,11 @@ static void print_aggr(char *prefix)
 			val = ena = run = 0;
 			nr = 0;
 			for (cpu = 0; cpu < perf_evsel__nr_cpus(counter); cpu++) {
+				if (counter->per_pkg) {
+					if (aggr_per_socket_skip(counter, cpu))
+						continue;
+				}
+
 				cpu2 = perf_evsel__cpus(counter)->map[cpu];
 				s2 = aggr_get_id(evsel_list->cpus, cpu2);
 				if (s2 != id)
