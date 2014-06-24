@@ -868,6 +868,9 @@ int __perf_evsel__read(struct perf_evsel *evsel,
 	aggr->val = aggr->ena = aggr->run = 0;
 
 	for (cpu = 0; cpu < ncpus; cpu++) {
+		if (!perf_evsel__cpu_is_reader(evsel, cpu))
+			continue;
+
 		for (thread = 0; thread < nthreads; thread++) {
 			if (FD(evsel, cpu, thread) < 0)
 				continue;

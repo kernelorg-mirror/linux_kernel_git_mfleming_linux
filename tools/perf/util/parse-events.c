@@ -272,7 +272,8 @@ const char *event_type(int type)
 static struct perf_evsel *
 __add_event(struct list_head *list, int *idx,
 	    struct perf_event_attr *attr,
-	    char *name, struct cpu_map *cpus)
+	    char *name, struct cpu_map *cpus,
+	    struct cpu_map *readers)
 {
 	struct perf_evsel *evsel;
 
@@ -283,6 +284,7 @@ __add_event(struct list_head *list, int *idx,
 		return NULL;
 
 	evsel->cpus = cpus;
+	evsel->readers = readers;
 	if (name)
 		evsel->name = strdup(name);
 	list_add_tail(&evsel->node, list);
@@ -292,7 +294,7 @@ __add_event(struct list_head *list, int *idx,
 static int add_event(struct list_head *list, int *idx,
 		     struct perf_event_attr *attr, char *name)
 {
-	return __add_event(list, idx, attr, name, NULL) ? 0 : -ENOMEM;
+	return __add_event(list, idx, attr, name, NULL, NULL) ? 0 : -ENOMEM;
 }
 
 static int parse_aliases(char *str, const char *names[][PERF_EVSEL__MAX_ALIASES], int size)
@@ -657,7 +659,7 @@ int parse_events_add_pmu(struct list_head *list, int *idx,
 		return -EINVAL;
 
 	evsel = __add_event(list, idx, &attr, pmu_event_name(head_config),
-			    pmu->cpus);
+			    pmu->cpus, pmu->readers);
 	if (evsel) {
 		evsel->unit = unit;
 		evsel->scale = scale;

@@ -17,6 +17,7 @@ struct perf_pmu {
 	char *name;
 	__u32 type;
 	struct cpu_map *cpus;
+	struct cpu_map *readers;
 	struct list_head format;
 	struct list_head aliases;
 	struct list_head list;

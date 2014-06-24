@@ -78,6 +78,7 @@ struct perf_evsel {
 	struct cgroup_sel	*cgrp;
 	void			*handler;
 	struct cpu_map		*cpus;
+	struct cpu_map		*readers;
 	unsigned int		sample_size;
 	int			id_pos;
 	int			is_pos;
@@ -356,5 +357,7 @@ static inline int perf_evsel__group_idx(struct perf_evsel *evsel)
 for ((_evsel) = list_entry((_leader)->node.next, struct perf_evsel, node); 	\
      (_evsel) && (_evsel)->leader == (_leader);					\
      (_evsel) = list_entry((_evsel)->node.next, struct perf_evsel, node))
+
+bool perf_evsel__cpu_is_reader(struct perf_evsel *evsel, int cpu);
 
 #endif /* __PERF_EVSEL_H */
