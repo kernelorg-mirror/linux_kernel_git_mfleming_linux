@@ -361,7 +361,7 @@ static void pmu_read_sysfs(void)
 	closedir(dir);
 }
 
-static struct cpu_map *pmu_cpumask(const char *name)
+static struct cpu_map *pmu_mask_file(const char *name, const char *fmt)
 {
 	struct stat st;
 	char path[PATH_MAX];
@@ -372,8 +372,7 @@ static struct cpu_map *pmu_cpumask(const char *name)
 	if (!sysfs)
 		return NULL;
 
-	snprintf(path, PATH_MAX,
-		 "%s/bus/event_source/devices/%s/cpumask", sysfs, name);
+	snprintf(path, PATH_MAX, fmt, sysfs, name);
 
 	if (stat(path, &st) < 0)
 		return NULL;
@@ -385,6 +384,16 @@ static struct cpu_map *pmu_cpumask(const char *name)
 	cpus = cpu_map__read(file);
 	fclose(file);
 	return cpus;
+}
+
+static struct cpu_map *pmu_cpumask(const char *name)
+{
+	return pmu_mask_file(name, "%s/bus/event_source/devices/%s/cpumask");
+}
+
+static struct cpu_map *pmu_readers(const char *name)
+{
+	return pmu_mask_file(name, "%s/bus/event_source/devices/%s/readers");
 }
 
 static struct perf_pmu *pmu_lookup(const char *name)
@@ -413,6 +422,7 @@ static struct perf_pmu *pmu_lookup(const char *name)
 		return NULL;
 
 	pmu->cpus = pmu_cpumask(name);
+	pmu->readers = pmu_readers(name);
 
 	INIT_LIST_HEAD(&pmu->format);
 	INIT_LIST_HEAD(&pmu->aliases);

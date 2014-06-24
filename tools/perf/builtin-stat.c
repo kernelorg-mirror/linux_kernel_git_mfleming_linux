@@ -172,6 +172,30 @@ static inline int perf_evsel__nr_cpus(struct perf_evsel *evsel)
 	return perf_evsel__cpus(evsel)->nr;
 }
 
+static inline int perf_evsel__nr_readers(struct perf_evsel *evsel)
+{
+	if (!evsel->readers)
+		return perf_evsel__nr_cpus(evsel);
+
+	return evsel->readers->nr;
+}
+
+bool perf_evsel__cpu_is_reader(struct perf_evsel *evsel, int cpu)
+{
+	int reader, nreaders;
+
+	if (!evsel->readers)
+		return true;
+
+	nreaders = perf_evsel__nr_readers(evsel);
+	for (reader = 0; reader < nreaders; reader++) {
+		if (evsel->readers->map[reader] == cpu)
+			return true;
+	}
+
+	return false;
+}
+
 static void perf_evsel__reset_stat_priv(struct perf_evsel *evsel)
 {
 	memset(evsel->priv, 0, sizeof(struct perf_stat));
@@ -420,6 +444,9 @@ static int read_counter(struct perf_evsel *counter)
 	int cpu;
 
 	for (cpu = 0; cpu < perf_evsel__nr_cpus(counter); cpu++) {
+		if (!perf_evsel__cpu_is_reader(counter, cpu))
+			continue;
+
 		if (__perf_evsel__read_on_cpu(counter, cpu, 0, scale) < 0)
 			return -1;
 
@@ -1121,6 +1148,9 @@ static void print_aggr(char *prefix)
 			val = ena = run = 0;
 			nr = 0;
 			for (cpu = 0; cpu < perf_evsel__nr_cpus(counter); cpu++) {
+				if (!perf_evsel__cpu_is_reader(counter, cpu))
+					continue;
+
 				cpu2 = perf_evsel__cpus(counter)->map[cpu];
 				s2 = aggr_get_id(evsel_list->cpus, cpu2);
 				if (s2 != id)
@@ -1244,6 +1274,9 @@ static void print_counter(struct perf_evsel *counter, char *prefix)
 	int cpu;
 
 	for (cpu = 0; cpu < perf_evsel__nr_cpus(counter); cpu++) {
+		if (!perf_evsel__cpu_is_reader(counter, cpu))
+			continue;
+
 		val = counter->counts->cpu[cpu].val;
 		ena = counter->counts->cpu[cpu].ena;
 		run = counter->counts->cpu[cpu].run;
