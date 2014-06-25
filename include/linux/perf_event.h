@@ -132,6 +132,7 @@ struct hw_perf_event {
 			struct list_head	qos_events_entry;
 			struct list_head	qos_groups_entry;
 			struct list_head	qos_group_entry;
+			u64			*qos_package_count;
 		};
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 		struct { /* breakpoint */
