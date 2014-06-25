@@ -76,36 +76,120 @@ static u64 __rmid_read(unsigned long rmid)
 	return val;
 }
 
-static unsigned long *qos_rmid_bitmap;
+struct qos_rmid_entry {
+	u64 rmid;
+	struct list_head list;
+};
+
+/*
+ * A least recently used list of RMIDs.
+ *
+ * Oldest entry at the head, newest (most recently used) entry at the
+ * tail. This list is never traversed, it's only used to keep track of
+ * the lru order. That is, we only pick entries of the head or insert
+ * them on the tail.
+ *
+ * All entries on the list are 'free', and their RMIDs are not currently
+ * in use. To mark an RMID as in use, remove its entry from the lru
+ * list.
+ *
+ * This list is protected by cache_mutex.
+ */
+static LIST_HEAD(qos_rmid_lru);
+
+/*
+ * We use a simple array of pointers so that we can lookup a struct
+ * qos_rmid_entry in O(1). This alleviates the callers of __get_rmid()
+ * and __put_rmid() from having to worry about dealing with struct
+ * qos_rmid_entry - they just deal with rmids, i.e. integers.
+ *
+ * Once this array is initialized it is read-only. No locks are required
+ * to access it.
+ *
+ * All entries for all RMIDs can be looked up in the this array at all
+ * times.
+ */
+static struct qos_rmid_entry **qos_rmid_ptrs;
+
+static inline struct qos_rmid_entry *__rmid_entry(int rmid)
+{
+	struct qos_rmid_entry *entry;
+
+	entry = qos_rmid_ptrs[rmid];
+	WARN_ON(entry->rmid != rmid);
+
+	return entry;
+}
 
 /*
  * Returns < 0 on fail.
+ *
+ * We expect to be called with cache_mutex held.
  */
 static int __get_rmid(void)
 {
-	return bitmap_find_free_region(qos_rmid_bitmap, qos_max_rmid, 0);
+	struct qos_rmid_entry *entry;
+
+	WARN_ON(!mutex_is_locked(&cache_mutex));
+
+	if (list_empty(&qos_rmid_lru))
+		return -EAGAIN;
+
+	entry = list_first_entry(&qos_rmid_lru, struct qos_rmid_entry, list);
+	list_del(&entry->list);
+
+	return entry->rmid;
 }
 
 static void __put_rmid(int rmid)
 {
-	bitmap_release_region(qos_rmid_bitmap, rmid, 0);
+	struct qos_rmid_entry *entry;
+
+	WARN_ON(!mutex_is_locked(&cache_mutex));
+
+	entry = __rmid_entry(rmid);
+
+	list_add_tail(&entry->list, &qos_rmid_lru);
 }
 
 static int intel_qos_setup_rmid_cache(void)
 {
-	qos_rmid_bitmap = kmalloc(sizeof(long) * BITS_TO_LONGS(qos_max_rmid), GFP_KERNEL);
-	if (!qos_rmid_bitmap)
+	struct qos_rmid_entry *entry;
+	int r;
+
+	qos_rmid_ptrs = kmalloc(sizeof(struct qos_rmid_entry *) *
+				(qos_max_rmid + 1), GFP_KERNEL);
+	if (!qos_rmid_ptrs)
 		return -ENOMEM;
 
-	bitmap_zero(qos_rmid_bitmap, qos_max_rmid);
+	for (r = 0; r <= qos_max_rmid; r++) {
+		struct qos_rmid_entry *entry;
+
+		entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+		if (!entry)
+			goto fail;
+
+		INIT_LIST_HEAD(&entry->list);
+		entry->rmid = r;
+		qos_rmid_ptrs[r] = entry;
+
+		list_add_tail(&entry->list, &qos_rmid_lru);
+	}
 
 	/*
 	 * RMID 0 is special and is always allocated. It's used for all
 	 * tasks that are not monitored.
 	 */
-	bitmap_allocate_region(qos_rmid_bitmap, 0, 0);
+	entry = __rmid_entry(0);
+	list_del(&entry->list);
 
 	return 0;
+fail:
+	while (r--)
+		kfree(qos_rmid_ptrs[r]);
+
+	kfree(qos_rmid_ptrs);
+	return -ENOMEM;
 }
 
 /*
