@@ -286,7 +286,7 @@ static bool __conflict_event(struct perf_event *a, struct perf_event *b)
  * If we're part of a group, we use the group's RMID.
  */
 static int intel_qos_setup_event(struct perf_event *event,
-				 struct perf_event **group)
+				 struct perf_event **group, int cpu)
 {
 	struct perf_event *iter;
 	int rmid;
@@ -295,6 +295,8 @@ static int intel_qos_setup_event(struct perf_event *event,
 		if (__match_event(iter, event)) {
 			/* All tasks in a group share an RMID */
 			event->hw.qos_rmid = iter->hw.qos_rmid;
+			event->hw.qos_package_count =
+				iter->hw.qos_package_count;
 			*group = iter;
 			return 0;
 		}
@@ -308,12 +310,31 @@ static int intel_qos_setup_event(struct perf_event *event,
 		return rmid;
 
 	event->hw.qos_rmid = rmid;
+
+	/*
+	 * For a task event we need counters for each package so that we
+	 * can cache the last read value.
+	 */
+	if (cpu == -1) {
+		u64 *counts;
+
+		counts = kzalloc(sizeof(u64) *
+				 cpumask_weight(&qos_cpumask), GFP_KERNEL);
+		if (!counts) {
+			__put_rmid(rmid);
+			return -ENOMEM;
+		}
+
+		event->hw.qos_package_count = counts;
+	}
+
 	return 0;
 }
 
 static void intel_qos_event_read(struct perf_event *event)
 {
 	unsigned long rmid = event->hw.qos_rmid;
+	int i, index, phys_id;
 	u64 val;
 
 	val = __rmid_read(rmid);
@@ -326,7 +347,47 @@ static void intel_qos_event_read(struct perf_event *event)
 
 	val *= qos_l3_scale; /* cachelines -> bytes */
 
-	local64_set(&event->count, val);
+	/*
+	 * If this event is per-cpu then we don't need to do any
+	 * aggregation in the kernel, it's all done in userland.
+	 */
+	if (event->cpu != -1) {
+		local64_set(&event->count, val);
+		return;
+	}
+
+	/*
+	 * OK, we've got a task event, recompute the total occupancy.
+	 *
+	 * There is a race window here because we're using stale
+	 * occupancy values since we're not able to do a cross-CPU
+	 * (socket) call to do the occupancy read because we're
+	 * executing with interrupts disabled.
+	 *
+	 * In an ideal world we'd do a smp_call_function_single() to
+	 * read the other sockets' instantaneous values because it may
+	 * have changed (reduced) since we last updated ->hw.qos_value[].
+	 *
+	 * If these values prove to be wildly inaccurate we may want to
+	 * consider installing a per-socket hrtimer to refresh the
+	 * values periodically.
+	 */
+	local64_set(&event->count, 0);
+
+	phys_id = topology_physical_package_id(smp_processor_id());
+	index = 0;
+
+	/* Convert phys_id to hw->qos_package_count index */
+	for_each_cpu(i, &qos_cpumask) {
+		if (phys_id == topology_physical_package_id(i))
+			break;
+		index++;
+	}
+
+	event->hw.qos_package_count[index] = val;
+
+	for (i = 0; i < cpumask_weight(&qos_cpumask); i++)
+		local64_add(event->hw.qos_package_count[i], &event->count);
 }
 
 static void intel_qos_event_start(struct perf_event *event, int mode)
@@ -452,16 +513,6 @@ static struct pmu intel_qos_pmu;
 
 /*
  * Takes non-sampling task,cgroup or machine wide events.
- *
- * XXX there's a bit of a problem in that we cannot simply do the one
- * event per node as one would want, since that one event would one get
- * scheduled on the one cpu. But we want to 'schedule' the RMID on all
- * CPUs.
- *
- * This means we want events for each CPU, however, that generates a lot
- * of duplicate values out to userspace -- this is not to be helped
- * unless we want to change the core code in some way. Fore more info,
- * see intel_qos_event_read().
  */
 static int intel_qos_event_init(struct perf_event *event)
 {
@@ -472,9 +523,6 @@ static int intel_qos_event_init(struct perf_event *event)
 		return -ENOENT;
 
 	if (event->attr.config & ~QOS_EVENT_MASK)
-		return -EINVAL;
-
-	if (event->cpu == -1)
 		return -EINVAL;
 
 	/* unsupported modes and filters */
@@ -495,7 +543,8 @@ static int intel_qos_event_init(struct perf_event *event)
 
 	mutex_lock(&cache_mutex);
 
-	err = intel_qos_setup_event(event, &group); /* will also set rmid */
+	/* Will also set rmid */
+	err = intel_qos_setup_event(event, &group, event->cpu);
 	if (err)
 		goto out;
 
