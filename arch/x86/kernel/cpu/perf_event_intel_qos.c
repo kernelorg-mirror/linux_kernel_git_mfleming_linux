@@ -275,12 +275,24 @@ static int intel_qos_setup_event(struct perf_event *event,
 	return 0;
 }
 
-static void intel_qos_event_read(struct perf_event *event)
+static void intel_qos_event_read(struct perf_event *__event)
 {
-	unsigned long rmid = event->hw.qos_rmid;
+	struct perf_event *event;
+	unsigned long rmid;
 	int i, index, phys_id;
 	u64 val;
 
+	/*
+	 * Walk up the chain of parent events till we find the root.
+	 * By default all child event counters are accumulated in the
+	 * parent, leading to duplicate values for task events. So we
+	 * just leave all child counters at zero and only update the
+	 * parent's counter.
+	 */
+	for (event = __event; event->parent; event = event->parent)
+		;
+
+	rmid = event->hw.qos_rmid;
 	val = __rmid_read(rmid);
 
 	/*
