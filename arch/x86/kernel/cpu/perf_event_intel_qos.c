@@ -275,6 +275,31 @@ static int intel_qos_setup_event(struct perf_event *event,
 	return 0;
 }
 
+static void intel_qos_async_read(void *data)
+{
+	struct perf_event *event = data;
+	unsigned long flags;
+	int i, index = 0;
+	u64 val;
+
+	raw_spin_lock_irqsave(&cache_lock, flags);
+
+	for_each_cpu(i, &qos_cpumask) {
+		if (i == smp_processor_id())
+			break;
+		index++;
+	}
+
+	val = __rmid_read(event->hw.qos_rmid);
+	event->hw.qos_package_count[index] = val;
+
+	local64_set(&event->count, 0);
+	for (i = 0; i < cpumask_weight(&qos_cpumask); i++)
+		local64_add(event->hw.qos_package_count[i], &event->count);
+
+	raw_spin_unlock_irqrestore(&cache_lock, flags);
+}
+
 static void intel_qos_event_read(struct perf_event *__event)
 {
 	struct perf_event *event;
@@ -335,9 +360,15 @@ static void intel_qos_event_read(struct perf_event *__event)
 
 	/* Convert phys_id to hw->qos_package_count index */
 	for_each_cpu(i, &qos_cpumask) {
-		if (phys_id == topology_physical_package_id(i))
-			break;
-		index++;
+		if (phys_id == topology_physical_package_id(i)) {
+			index = i;
+			continue;
+		}
+
+		event->hw.qos_csd.func = intel_qos_async_read;
+		event->hw.qos_csd.info = event;
+		event->hw.qos_csd.flags = 0;
+		smp_call_function_single_async(i, &event->hw.qos_csd);
 	}
 
 	event->hw.qos_package_count[index] = val;
