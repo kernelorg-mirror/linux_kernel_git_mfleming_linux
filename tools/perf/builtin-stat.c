@@ -964,7 +964,7 @@ static void abs_printout(int cpu, int nr, struct perf_evsel *evsel, double avg)
 
 	aggr_printout(evsel, cpu, nr);
 
-	if (aggr_mode == AGGR_GLOBAL)
+	if (aggr_mode == AGGR_GLOBAL || aggr_mode == AGGR_CORE)
 		cpu = 0;
 
 	fprintf(output, fmt, avg, csv_sep);
